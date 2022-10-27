@@ -26,8 +26,8 @@ function runApp() {
 	// Start listening for connections, and serve static files.
 	const server = new WebHost({
 		baseDir: resolvePath(__dirname, '../public'),
-		port: 3901,
-        permissions: [ Permissions.UserTracking, Permissions.UserInteraction ]
+		port: 5000,
+		permissions: [ Permissions.UserTracking, Permissions.UserInteraction ]
 	});
 
 	// Handle new application sessions

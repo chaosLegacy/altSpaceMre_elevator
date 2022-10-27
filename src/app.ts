@@ -4,116 +4,257 @@
  */
 
 import * as MRE from '@microsoft/mixed-reality-extension-sdk';
+import { PlayingMedia } from './media';
+import { getBooleanOption } from './parameter-set-util';
+
+import fetch from "node-fetch";
+import assert = require("assert");
+
+
+let DEBUG: boolean;
+
+type SceneDescriptor = {
+	buttonId: string;
+	elevatorId: string; 
+	volume: number;
+	rolloffStartDistance: number;
+	delay: number;
+	height: number;
+	width: number;
+	speed: number;
+	length: number;
+	x: number;
+	y: number;
+	z: number;
+	vFX: {
+		moveUpSound: string;
+		moveDownSound: string;
+	};
+};
 
 /**
  * The main class of this app. All the logic goes here.
  */
-export default class HelloWorld {
-	private assets: MRE.AssetContainer;
-	private button: MRE.Actor = null;
-	private elevator: MRE.Actor = null;
-	private config: { [key: string]: number };
+export default class Elevator {
 	private state = true;
-	
+	private elevatorRoot: MRE.Actor = null;
+	private elevator: MRE.Actor = null;
+	private button: MRE.Actor = null;
+	constructor(
+		private context: MRE.Context,
+		private params: MRE.ParameterSet
+	) {
+		DEBUG = getBooleanOption(params, "debug", false);
+		this._assets = new MRE.AssetContainer(this.context);
 
-	constructor(private context: MRE.Context, private params: MRE.ParameterSet) {
-		this.context.onStarted(() => this.started());
+		this.context.onUserJoined((user) => this.userJoined(user));
+		this.context.onUserLeft((user) => this.userLeft(user));
+		this.context.onStarted(() => this.onStarted());
 	}
 
-	private user: MRE.User;
-	/**
-	 * Once the context is "started", initialize the app.
-	 */
-	private started() {
-		// set up somewhere to store loaded assets (meshes, textures, animations, gltfs, etc.)
-		this.assets = new MRE.AssetContainer(this.context);
-		this.config = { "height": 5, "speed": 2, "shape": 0, "width": 0.4, "length": 0.4, "x": 0, "y": 0, "z": 0 };
-		for (const key in this.params) {
-			this.config[key] = Number(this.params[key]);
+	private _assets: MRE.AssetContainer = null;
+	private sceneDatabase: SceneDescriptor;
+
+	private soundsPath: string[] = [];
+	private sounds: { [key: string]: MRE.Sound } = {};
+	private soundPlaying: { [key: string]: PlayingMedia } = {};
+
+	private userJoined(user: MRE.User) {
+		if (DEBUG) {
+			console.debug(
+				`Connection request by ${user.name} from ${user.properties.remoteAddress}`
+			);
 		}
+	}
+	private userLeft(user: MRE.User) {
+		if (DEBUG) {
+			console.debug(`Box collider has been removed for ${user.name}`);
+		}
+	}
 
-		// Load a glTF model before we use it
-		const buttonID = "artifact:1765608764049719385";
-
-		// spawn a copy of the glTF model
-		this.button = MRE.Actor.CreateFromLibrary(this.context, {
-			// using the data we loaded earlier
-			resourceId: buttonID,
-			// Also apply the following generic actor properties.
-			actor: {
-				name: "Altspace Cube",
-				// Parent the glTF model to the text actor, so the transform is relative to the text
-				transform: {
-					local: {
-						position: { x: -2.5 + this.config["x"], y: 0 + this.config["y"], z: 0.50 + this.config["z"] },
-						scale: { x: 0.4, y: 0.4, z: 0.4 }
+	private onStarted() {
+		if (this.params.content_pack) {
+			fetch(
+				"https://account.altvr.com/api/content_packs/" +
+					this.params.content_pack +
+					"/raw.json"
+			)
+				.then((res: any) => res.json())
+				.then((json: any) => {
+					if (DEBUG) {
+						console.log(json);
 					}
-				}
-			}
-		});
-
-		let resourceID: string;
-		const shape = this.config["shape"];
-		switch(shape) {
-			case 0:
-				resourceID = "artifact:1765571507825672216";
-				break;
-			case 1:
-				resourceID = "artifact:1765571516868591649";
-				break;
-			case 2:
-				resourceID = "artifact:1765571499302846486";
-				break;
-			default:
-				resourceID = "artifact:1765571490788409362";
+					this.sceneDatabase = Object.assign({}, json);
+					this.started();
+				});
 		}
-		this.elevator = MRE.Actor.CreateFromLibrary(this.context, {
-			// using the data we loaded earlier
-			resourceId: resourceID,
-			// Also apply the following generic actor properties.
+	}
+
+	private started() {
+		const sceneRecord = this.sceneDatabase;
+		console.log("sceneRecord: ", sceneRecord);
+		for (const audio of Object.values(sceneRecord.vFX)) {
+			this.soundsPath.push(audio);
+		}
+		this.initSoundFX();
+
+		this.elevatorRoot = MRE.Actor.Create(this.context, {
 			actor: {
-				name: "Altspace Cube",
-				// Parent the glTF model to the text actor, so the transform is relative to the text
+				name: "elevatorRoot",
 				transform: {
 					local: {
 						position: { x: 0, y: 0, z: 0 },
-						scale: { x: this.config["width"], y: 0.4, z: this.config["length"] }
-					}
+						rotation: { x: 0, y: 0, z: 0 },
+						scale: { x: 1, y: 1, z: 1 },
+					},
+				},
+			},
+		});
+
+		this.elevator = MRE.Actor.CreateFromLibrary(this.context, {
+			resourceId: sceneRecord.elevatorId,
+			actor: {
+				name: "elevator",
+				parentId: this.elevatorRoot.id,
+				transform: {
+					local: {
+						position: { x: 0, y: 0, z: 0 },
+						scale: {
+							x: sceneRecord.width,
+							y: 0.4,
+							z: sceneRecord.length,
+						},
+					},
 				},
 				collider: {
 					geometry: {
 						shape: MRE.ColliderType.Box,
-						size: { x: 1.6 + this.config["width"], y: 0.5, z: 1.6 + this.config["length"] }
+						size: {
+							x: 1.6 + sceneRecord.width,
+							y: 0.5,
+							z: 1.6 + sceneRecord.length,
+						},
 					},
-					layer: MRE.CollisionLayer.Navigation
-				}
-			}
+					layer: MRE.CollisionLayer.Navigation,
+				},
+			},
+		});
+
+		this.button = MRE.Actor.CreateFromLibrary(this.context, {
+			resourceId: sceneRecord.buttonId,
+			actor: {
+				name: "button",
+				parentId: this.elevator.id,
+				transform: {
+					local: {
+						position: {
+							x: sceneRecord.x,
+							y: sceneRecord.y,
+							z: sceneRecord.z,
+						},
+						scale: { x: 1, y: 1, z: 1 },
+					},
+				},
+			},
 		});
 
 		const buttonB = this.button.setBehavior(MRE.ButtonBehavior);
 
-		buttonB.onClick(_ => {
-			this.elevatorAnim()
+		buttonB.onClick((_) => {
+			this.elevatorAnim();
 		});
-
 	}
-	private async elevatorAnim() {
-		if (this.state === true) {
-			this.state= false;
-			await MRE.Animation.AnimateTo(this.context, this.elevator, {
-				destination: { transform: { local: { position: { x: 0, y: this.config["height"], z: 0 } } } },
-				duration: this.config["speed"]
+
+	private initSoundFX() {
+		const baseUrl =
+			"https://cdn-content-ingress.altvr.com/uploads/audio_clip/audio";
+
+		this.soundsPath.forEach((sound: string) => {
+			this.soundPlaying[sound] = new PlayingMedia();
+			this.sounds[sound] = this._assets.createSound(sound, {
+				uri: `${baseUrl}/${sound}`,
 			});
-			await this.sleep((this.config["speed"] + 4) * 1000);
-			await MRE.Animation.AnimateTo(this.context, this.elevator, {
-				destination: { transform: { local: { position: { x: 0, y: 0, z: 0 } } } },
-				duration: 1
-			});
-			this.state=true;
+		});
+	}
+
+	private startSound = (
+		sound: MRE.Sound,
+		actor: MRE.Actor,
+		actorRecord: SceneDescriptor
+	) => {
+		if (this.soundPlaying[sound.name].isLoaded) {
+			this.soundPlaying[sound.name].stop();
 		}
 
+		assert(!this.soundPlaying[sound.name].isLoaded);
+		if (sound !== undefined) {
+			const audioOptions: MRE.SetAudioStateOptions = {
+				volume: actorRecord.volume,
+				looping: false,
+				time: 0,
+			};
+
+			if (actorRecord.rolloffStartDistance) {
+				audioOptions.doppler = 0;
+				audioOptions.spread = 0;
+				audioOptions.rolloffStartDistance =
+					actorRecord.rolloffStartDistance;
+			}
+
+			this.soundPlaying[sound.name] = new PlayingMedia(
+				(actor || this.elevatorRoot).startSound(sound.id, audioOptions),
+				audioOptions
+			);
+		}
+
+		return;
+	};
+
+	private delay(milliseconds: number): Promise<void> {
+		return new Promise<void>((resolve) => {
+			setTimeout(() => resolve(), milliseconds);
+		});
 	}
-	private sleep(ms: number) {
-		return new Promise(resolve => setTimeout(resolve, ms));
+
+	private async elevatorAnim() {
+		const sceneRecord = this.sceneDatabase;
+		if (this.state === true) {
+			this.state = false;
+			const { moveUpSound, moveDownSound } = sceneRecord.vFX;
+
+			this.startSound(
+				this.sounds[moveUpSound],
+				this.elevator,
+				sceneRecord
+			);
+
+			await MRE.Animation.AnimateTo(this.context, this.elevator, {
+				destination: {
+					transform: {
+						local: {
+							position: { x: 0, y: sceneRecord.height, z: 0 },
+						},
+					},
+				},
+				duration: sceneRecord.speed,
+				easing: MRE.AnimationEaseCurves.EaseInOutSine,
+			});
+			await this.delay(sceneRecord.delay * 1000);
+
+			this.startSound(
+				this.sounds[moveDownSound],
+				this.elevator,
+				sceneRecord
+			);
+			
+			await MRE.Animation.AnimateTo(this.context, this.elevator, {
+				destination: {
+					transform: { local: { position: { x: 0, y: 0, z: 0 } } },
+				},
+				duration: 1,
+			});
+			
+			this.state = true;
+		}
 	}
 }
