@@ -130,9 +130,9 @@ export default class Elevator {
 					geometry: {
 						shape: MRE.ColliderType.Box,
 						size: {
-							x: 1.6 + sceneRecord.width,
+							x: sceneRecord.width,
 							y: 0.5,
-							z: 1.6 + sceneRecord.length,
+							z: sceneRecord.length,
 						},
 					},
 					layer: MRE.CollisionLayer.Navigation,
@@ -239,19 +239,21 @@ export default class Elevator {
 				duration: sceneRecord.speed,
 				easing: MRE.AnimationEaseCurves.EaseInOutSine,
 			});
-			await this.delay(sceneRecord.delay * 1000);
 
+			await this.delay(sceneRecord.delay * 1000);
+			
 			this.startSound(
 				this.sounds[moveDownSound],
 				this.elevator,
 				sceneRecord
 			);
-			
+
 			await MRE.Animation.AnimateTo(this.context, this.elevator, {
 				destination: {
 					transform: { local: { position: { x: 0, y: 0, z: 0 } } },
 				},
-				duration: 1,
+				duration: sceneRecord.speed,
+				easing: MRE.AnimationEaseCurves.EaseInOutSine,
 			});
 			
 			this.state = true;
